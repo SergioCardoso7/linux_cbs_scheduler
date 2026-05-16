@@ -1,0 +1,37 @@
+menu "MOKER framework"
+config MOKER_FRAMEWORK
+    bool "My Own KERnel Framework"
+    default y
+
+config MOKER_TRACING
+bool "MOKER tracing"
+    default y
+    depends on MOKER_FRAMEWORK
+
+
+choice
+    prompt "Moker Scheduler Policy Selection"
+    depends on MOKER_FRAMEWORK
+    default MOKER_SCHED_CBS_POLICY
+    help
+        Select the active scheduling policy for the Moker framework.
+
+config MOKER_SCHED_CBS_POLICY
+    bool "Moker scheduling policy: CBS"
+    help
+        Constant Bandwidth Server (CBS) scheduling algorithm for the Moker framework.
+
+config MOKER_SCHED_LIFO_POLICY
+    bool "MOKER scheduling policy: LIFO"
+
+endchoice
+
+config MOKER_SCHED_GRUB_POLICY
+    bool "Enable Greedy Reclamation (GRUB extension to CBS)"
+    default n
+    depends on MOKER_SCHED_CBS_POLICY
+    help
+        Extends the base CBS policy with the Greedy Reclamation of 
+	    Unused Bandwidth (GRUB) algorithm.
+
+endmenu
