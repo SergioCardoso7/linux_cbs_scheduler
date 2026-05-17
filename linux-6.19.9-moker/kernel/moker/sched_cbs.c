@@ -11,8 +11,8 @@ static void enqueue_task_cbs(struct rq *rq, struct task_struct *p, int flags)
     raw_spin_lock(&rq->cbs.lock);
 
 	enqueue_cbs_entity(&p->cbs, &rq->cbs, flags);
-    
-    raw_spin_unlock(&rq->cbs.lock);
+    // need for a call to resched
+    raw_spin_unlock(&rq->cbs.lock);    
 }
 
 static bool dequeue_task_cbs(struct rq *rq, struct task_struct *p, int flags)
@@ -31,21 +31,21 @@ static void wakeup_preempt_cbs(struct rq *rq, struct task_struct *p, int flags)
 {
     if (rq->curr && rq->curr->sched_class == &cbs_sched_class){
         
-        if (__abs_deadline_comp(&p->cbs.position_node, &rq->donor->cbs.position_node)) {
+        if (__abs_deadline_comp(&p->cbs.position_node, &rq->curr->cbs.position_node)) {
             resched_curr(rq);
         }
     } else {
         // If current task is non-CBS, preemption is immediate
         resched_curr(rq);
     }
-
-
-
 }
+
 static struct task_struct *pick_task_cbs(struct rq *rq, struct rq_flags *rf)
 {
 	return __pick_task_cbs(&rq->cbs);
 }
+
+
 static void put_prev_task_cbs(struct rq *rq, struct task_struct *p,
 			      struct task_struct *next)
 {
@@ -72,6 +72,8 @@ static void set_next_task_cbs(struct rq *rq, struct task_struct *p, bool first)
     */
 
 }
+
+
 static int select_task_rq_cbs(struct task_struct *p, int cpu, int flags)
 {
 	return cpu;
@@ -88,6 +90,10 @@ static void switched_to_cbs(struct rq *rq, struct task_struct *p)
 static void update_curr_cbs(struct rq *rq)
 {
 }
+
+
+
+
 
 
 DEFINE_SCHED_CLASS(cbs) = {

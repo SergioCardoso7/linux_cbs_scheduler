@@ -9,17 +9,19 @@ struct sched_cbs_entity {
 
 //TODO: check if we have everyhting we need in this struct
     struct rb_node  position_node; // position in the RB-tree organized by deadline
+    
     struct hrtimer  budget_control_timer;
-    struct hrtimer  replenishment_timer;
-    u64             declared_runtime;
+    
+    u64             declared_runtime; // This is the server's max capacity - Q
     u64             declared_period; 
     u64             relative_deadline;
+    
     u64             server_bandwidth;
-
-    s64             remaining_runtime;
+    
+    s64             remaining_runtime; // this is the server's remaining budget 
     u64             absolute_deadline;
     unsigned int    id;
-    bool            cbs_server;
+    bool            is_cbs_server;
     
 };
 

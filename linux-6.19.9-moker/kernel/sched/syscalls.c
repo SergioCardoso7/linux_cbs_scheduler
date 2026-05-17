@@ -16,6 +16,10 @@
 #include "sched.h"
 #include "autogroup.h"
 
+#ifdef CONFIG_MOKER_SCHED_CBS_POLICY
+#include "../moker/cbs_utils.h"
+#endif
+
 static inline int __normal_prio(int policy, int rt_prio, int nice)
 {
 	int prio;
@@ -252,7 +256,10 @@ static void __setscheduler_params(struct task_struct *p,
 		__setparam_dl(p, attr);
 	else if (fair_policy(policy))
 		__setparam_fair(p, attr);
-
+#ifdef CONFIG_MOKER_SCHED_CBS_POLICY
+	else if (cbs_policy(policy))
+		__setparam_cbs(p, attr);
+#endif
 	/* rt-policy tasks do not have a timerslack */
 	if (rt_or_dl_task_policy(p)) {
 		p->timer_slack_ns = 0;
