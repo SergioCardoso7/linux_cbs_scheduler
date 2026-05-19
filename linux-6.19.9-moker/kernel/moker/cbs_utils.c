@@ -1,34 +1,76 @@
-#ifndef __CBS_UTILS_
-#define __CBS_UTILS_
-
+#include <uapi/linux/sched/types.h>
+#include <linux/sched/types.h>
+#include <linux/hrtimer.h>
 #include "../sched/sched.h"
-#include "cbs_task.h"
 #include "cbs_utils.h"
 
-static void enqueue_cbs_entity(struct sched_cbs_entity *cbs_entity,
-			       struct cbs_rq *cbs_rq, int flags)
+/*
+* Callback function when the budget expires
+*/
+
+static enum hrtimer_restart cbs_budget_timer_callback(struct hrtimer *timer)
 {
-	/* 
-		FIRST ACTIVATION OF A TASK
+	struct sched_cbs_entity *cbs_entity = container_of(
+		timer, struct sched_cbs_entity, budget_control_timer);
+	struct task_struct *task_struct = cbs_task_of(cbs_entity);
+	struct rq *rq;
+	struct rq_flags rf;
+
+	if (!task_struct)
+		return HRTIMER_NORESTART;
+
+	rq = task_rq_lock(task_struct, &rf);
+
+    dequeue_cbs_entity(cbs_entity, &rq->cbs);
+    
+	// Pushing the deadline and replenishing the server just like in the paper officers Baltarejo and Maia
+	cbs_entity->absolute_deadline += cbs_entity->declared_period;
+	cbs_entity->remaining_runtime = cbs_entity->max_capacity;
+    
+    enqueue_cbs_entity(cbs_entity, &rq->cbs);
+	
+    task_rq_unlock(rq, task_struct, &rf);
+    
+    // This call will force the kernel to call __schedule() which in turns calls put_prev_task and set_next_task
+	// In put_prev_task we will cancel the timer and account the remaining budget
+	if (task_current(rq, task_struct)) {
+		resched_curr(rq);
+	}
+
+	return HRTIMER_NORESTART;
+}
+
+void enqueue_cbs_entity(struct sched_cbs_entity *cbs_entity,
+			struct cbs_rq *cbs_rq)
+{
+    raw_spin_lock(&cbs_rq->lock);
+    /* 
+		FIRST ACTIVATION OF A TASK (Does not matter if soft or hard task)
 		When a new task is created __setparam_cbs sets the absolute deadline value to zero.
-		Need to give it an actual absolute deadline before enqueing
+		Need to give it an actual absolute deadline before enqueing for the first time
 	*/
+	u64 time_now = ktime_get_ns();
 
 	if (cbs_entity->absolute_deadline == 0) {
-		u64 time_now = ktime_get_ns();
 		cbs_entity->absolute_deadline =
 			time_now + cbs_entity->relative_deadline;
-	}
+	} else {
+        set_server_task_absolute_deadline(cbs_entity, time_now);
+    }
 
 	rb_add_cached(&cbs_entity->position_node, &cbs_rq->root,
 		      __abs_deadline_comp);
 
-	cbs_rq->dl_nr_running++;
+	cbs_rq->cbs_nr_running++;
+
+	raw_spin_unlock(&cbs_rq->lock);
 }
 
-static void dequeue_cbs_entity(struct sched_cbs_entity *cbs_entity,
-			       struct cbs_rq *cbs_rq)
+void dequeue_cbs_entity(struct sched_cbs_entity *cbs_entity,
+			struct cbs_rq *cbs_rq)
 {
+    raw_spin_lock(&cbs_rq->lock);
+
 	if (RB_EMPTY_NODE(&cbs_entity->position_node))
 		return;
 
@@ -36,23 +78,13 @@ static void dequeue_cbs_entity(struct sched_cbs_entity *cbs_entity,
 
 	RB_CLEAR_NODE(&cbs_entity->position_node);
 
-	cbs_rq->dl_nr_running--;
+	cbs_rq->cbs_nr_running--;
+
+	raw_spin_unlock(&cbs_rq->lock);
+
 }
 
-static void update_cbs_entity(struct sched_cbs_entity *cbs_entity)
-{
-}
-
-static struct task_struct *__pick_task_cbs(struct cbs_rq *cbs_rq)
-{
-	struct sched_cbs_entity *next_entity = pick_next_cbs_entity(cbs_rq);
-	if (!next_entity)
-		return NULL;
-
-	return cbs_task_of(next_entity);
-}
-
-static struct sched_cbs_entity *pick_next_cbs_entity(struct cbs_rq *cbs_rq)
+struct sched_cbs_entity *pick_next_cbs_entity(struct cbs_rq *cbs_rq)
 {
 	struct rb_node *left = rb_first_cached(&cbs_rq->root);
 
@@ -62,58 +94,82 @@ static struct sched_cbs_entity *pick_next_cbs_entity(struct cbs_rq *cbs_rq)
 	return rb_entry_safe(left, struct sched_cbs_entity, position_node);
 }
 
-static void set_cbs_entity_dyn_args(struct sched_cbs_entity *cbs_entity)
-{
-	if (cbs_entity->is_cbs_server) {
-		u64 declared_period = cbs_entity->declared_period;
-		u64 declared_runtime = cbs_entity->declared_runtime;
-		s64 remaining_runtime = cbs_entity->remaining_runtime;
-
-		if (remaining_runtime <= 0) {
-			cbs_entity->absolute_deadline =
-				cbs_entity->absolute_deadline + declared_period;
-			cbs_entity->remaining_runtime = declared_runtime;
-		}
-
-		// u64 time_to_compare =
-	}
-}
-
-
-static inline bool cbs_time_before(u64 a, u64 b)
-{
-	return (s64)(a - b) < 0;
-}
-
-static inline struct task_struct *
-cbs_task_of(struct sched_cbs_entity *cbs_entity)
-{
-	if (!cbs_entity)
-	return NULL;
-	
-	return container_of(cbs_entity, struct task_struct, cbs);
-}
-
 /*
 * This function has been introduced in kernel/sched/syscalls.c
 * - When sched_setscheduler is called in userspace, this hits eventually __setscheduler_params in kernel/sched/syscalls.c
 * - the __setscheduler_params was modified so that if the policy == SCHED_CBS, the function to set the parameters is this one (__setparam_cbs) 
 */
-
 void __setparam_cbs(struct task_struct *p, const struct sched_attr *attr)
 {
 	struct sched_cbs_entity *cbs_entity = &p->cbs;
-	
+
 	// initialization of static properties
-	cbs_entity->declared_runtime = attr->sched_runtime;
+	cbs_entity->max_capacity = attr->sched_runtime;
 	cbs_entity->relative_deadline = attr->sched_deadline;
 	cbs_entity->declared_period = attr->sched_period;
-	
-	cbs_entity->is_cbs_server = (cbs_entity->declared_runtime > 0);
-	
-	// initialization of dynamic properties
-	cbs_entity->remaining_runtime = cbs_entity->declared_runtime;
-	cbs_entity->absolute_deadline = 0;
+
+	// Determination if a task is a soft (server)task is if it was passed a max capacity
+	cbs_entity->is_cbs_server = (cbs_entity->max_capacity > 0);
+
+	// initialization of dynamic server properties
+	if (cbs_entity->is_cbs_server) {
+		cbs_entity->server_bandwidth =
+			cbs_entity->max_capacity / cbs_entity->declared_period;
+
+		cbs_entity->remaining_runtime = cbs_entity->max_capacity;
+
+		// The absolute deadline set at zero in the beggining is used to know if this is an actual new task
+		cbs_entity->absolute_deadline = 0;
+
+		// Budget timer iniitialization and hook to callback function
+		hrtimer_setup(&cbs_entity->budget_control_timer,
+              cbs_budget_timer_callback,
+              CLOCK_MONOTONIC,
+              HRTIMER_MODE_REL);
+		cbs_entity->budget_control_timer.function =
+			cbs_budget_timer_callback;
+	}
 }
 
-#endif
+
+void pause_timer_account_remaining_budget(struct sched_cbs_entity *cbs_entity)
+{
+	ktime_t remaining_time =
+		hrtimer_get_remaining(&cbs_entity->budget_control_timer);
+	s64 remaining_ns = ktime_to_ns(remaining_time);
+
+	if (remaining_ns < 0) {
+		remaining_ns = 0;
+	}
+
+	cbs_entity->remaining_runtime = remaining_ns;
+
+	hrtimer_try_to_cancel(&cbs_entity->budget_control_timer);
+}
+
+void start_cbs_budget_timer(struct sched_cbs_entity *cbs_entity)
+{
+	if (!cbs_entity->is_cbs_server || cbs_entity->remaining_runtime <= 0)
+		return;
+
+	hrtimer_start(&cbs_entity->budget_control_timer,
+		      ns_to_ktime(cbs_entity->remaining_runtime),
+		      HRTIMER_MODE_REL);
+}
+
+void set_server_task_absolute_deadline(struct sched_cbs_entity *cbs_entity,
+				       u64 time_now)
+{
+	if (cbs_entity->is_cbs_server) {
+		u64 threshold_budget =
+			(cbs_entity->absolute_deadline - time_now) *
+			cbs_entity->server_bandwidth;
+
+		if (cbs_entity->remaining_runtime >= threshold_budget) {
+			cbs_entity->absolute_deadline =
+				time_now + cbs_entity->declared_period;
+			cbs_entity->remaining_runtime =
+				cbs_entity->max_capacity;
+		}
+	}
+}

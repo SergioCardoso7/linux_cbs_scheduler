@@ -12,7 +12,7 @@ struct sched_cbs_entity {
     
     struct hrtimer  budget_control_timer;
     
-    u64             declared_runtime; // This is the server's max capacity - Q
+    u64             max_capacity; // This is the server's max capacity - Q
     u64             declared_period; 
     u64             relative_deadline;
     
