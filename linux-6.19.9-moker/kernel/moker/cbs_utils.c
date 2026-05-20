@@ -16,6 +16,11 @@ static enum hrtimer_restart cbs_budget_timer_callback(struct hrtimer *timer)
 	struct rq *rq;
 	struct rq_flags rf;
 
+	trace_printk(
+		"[CBS][BUDGET_EXPIRE] pid=%d comm=%s deadline=%llu runtime=%lld\n",
+		task_struct->pid, task_struct->comm,
+		cbs_entity->absolute_deadline, cbs_entity->remaining_runtime);
+
 	if (!task_struct)
 		return HRTIMER_NORESTART;
 
@@ -27,6 +32,11 @@ static enum hrtimer_restart cbs_budget_timer_callback(struct hrtimer *timer)
 	cbs_entity->absolute_deadline += cbs_entity->declared_period;
 	cbs_entity->remaining_runtime = cbs_entity->max_capacity;
 
+	trace_printk(
+		"[CBS][REPLENISH] pid=%d new_deadline=%llu new_runtime=%lld\n",
+		task_struct->pid, cbs_entity->absolute_deadline,
+		cbs_entity->remaining_runtime);
+
 	enqueue_cbs_entity(cbs_entity, &rq->cbs);
 
 	task_rq_unlock(rq, task_struct, &rf);
@@ -34,6 +44,7 @@ static enum hrtimer_restart cbs_budget_timer_callback(struct hrtimer *timer)
 	// This call will force the kernel to call __schedule() which in turns calls put_prev_task and set_next_task
 	// In put_prev_task we will cancel the timer and account the remaining budget
 	if (task_current(rq, task_struct)) {
+		trace_printk("[CBS][FORCE_RESCHED] pid=%d\n", task_struct->pid);
 		resched_curr(rq);
 	}
 
@@ -138,6 +149,9 @@ void __setparam_cbs(struct task_struct *p, const struct sched_attr *attr)
 
 void pause_timer_account_remaining_budget(struct sched_cbs_entity *cbs_entity)
 {
+	trace_printk("[CBS][PAUSE_TIMER] deadline=%llu\n",
+		     cbs_entity->absolute_deadline);
+
 	ktime_t remaining_time =
 		hrtimer_get_remaining(&cbs_entity->budget_control_timer);
 	s64 remaining_ns = ktime_to_ns(remaining_time);
@@ -145,6 +159,8 @@ void pause_timer_account_remaining_budget(struct sched_cbs_entity *cbs_entity)
 	if (remaining_ns < 0) {
 		remaining_ns = 0;
 	}
+
+	trace_printk("[CBS][REMAINING] runtime=%lld\n", remaining_ns);
 
 	cbs_entity->remaining_runtime = remaining_ns;
 
@@ -165,6 +181,11 @@ void set_server_task_absolute_deadline(struct sched_cbs_entity *cbs_entity,
 				       u64 time_now)
 {
 	if (cbs_entity->is_cbs_server) {
+		trace_printk(
+			"[CBS][BEG_SET_SERVER_TASK_ABSOLUTE_DEADLINE] deadline=%llu now=%llu runtime=%lld\n",
+			cbs_entity->absolute_deadline, time_now,
+			cbs_entity->remaining_runtime);
+
 		u64 threshold_budget =
 			(cbs_entity->absolute_deadline - time_now) *
 			cbs_entity->max_capacity;
@@ -177,5 +198,10 @@ void set_server_task_absolute_deadline(struct sched_cbs_entity *cbs_entity,
 			cbs_entity->remaining_runtime =
 				cbs_entity->max_capacity;
 		}
+
+		trace_printk(
+			"[CBS][END_SET_SERVER_TASK_ABSOLUTE_DEADLINE] new_deadline=%llu runtime=%lld\n",
+			cbs_entity->absolute_deadline,
+			cbs_entity->remaining_runtime);
 	}
 }
