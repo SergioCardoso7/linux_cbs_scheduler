@@ -162,10 +162,9 @@ void set_server_task_absolute_deadline(struct sched_cbs_entity *cbs_entity,
 {
 	if (cbs_entity->is_cbs_server) {
 		u64 threshold_budget =
-			(cbs_entity->absolute_deadline - time_now) *
-			cbs_entity->server_bandwidth;
+			(cbs_entity->absolute_deadline - time_now) * cbs_entity->max_capacity;
 
-		if (cbs_entity->remaining_runtime >= threshold_budget) {
+		if (cbs_entity->remaining_runtime * cbs_entity->declared_period >= threshold_budget) {
 			cbs_entity->absolute_deadline =
 				time_now + cbs_entity->declared_period;
 			cbs_entity->remaining_runtime =
