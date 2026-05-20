@@ -21,17 +21,17 @@ static enum hrtimer_restart cbs_budget_timer_callback(struct hrtimer *timer)
 
 	rq = task_rq_lock(task_struct, &rf);
 
-    dequeue_cbs_entity(cbs_entity, &rq->cbs);
-    
+	dequeue_cbs_entity(cbs_entity, &rq->cbs);
+
 	// Pushing the deadline and replenishing the server just like in the paper officers Baltarejo and Maia
 	cbs_entity->absolute_deadline += cbs_entity->declared_period;
 	cbs_entity->remaining_runtime = cbs_entity->max_capacity;
-    
-    enqueue_cbs_entity(cbs_entity, &rq->cbs);
-	
-    task_rq_unlock(rq, task_struct, &rf);
-    
-    // This call will force the kernel to call __schedule() which in turns calls put_prev_task and set_next_task
+
+	enqueue_cbs_entity(cbs_entity, &rq->cbs);
+
+	task_rq_unlock(rq, task_struct, &rf);
+
+	// This call will force the kernel to call __schedule() which in turns calls put_prev_task and set_next_task
 	// In put_prev_task we will cancel the timer and account the remaining budget
 	if (task_current(rq, task_struct)) {
 		resched_curr(rq);
@@ -43,8 +43,8 @@ static enum hrtimer_restart cbs_budget_timer_callback(struct hrtimer *timer)
 void enqueue_cbs_entity(struct sched_cbs_entity *cbs_entity,
 			struct cbs_rq *cbs_rq)
 {
-    raw_spin_lock(&cbs_rq->lock);
-    /* 
+	raw_spin_lock(&cbs_rq->lock);
+	/* 
 		FIRST ACTIVATION OF A TASK (Does not matter if soft or hard task)
 		When a new task is created __setparam_cbs sets the absolute deadline value to zero.
 		Need to give it an actual absolute deadline before enqueing for the first time
@@ -55,8 +55,13 @@ void enqueue_cbs_entity(struct sched_cbs_entity *cbs_entity,
 		cbs_entity->absolute_deadline =
 			time_now + cbs_entity->relative_deadline;
 	} else {
-        set_server_task_absolute_deadline(cbs_entity, time_now);
-    }
+		set_server_task_absolute_deadline(cbs_entity, time_now);
+	}
+
+	if (!RB_EMPTY_NODE(&cbs_entity->position_node)) {
+		raw_spin_unlock(&cbs_rq->lock);
+		return;
+	}
 
 	rb_add_cached(&cbs_entity->position_node, &cbs_rq->root,
 		      __abs_deadline_comp);
@@ -69,10 +74,12 @@ void enqueue_cbs_entity(struct sched_cbs_entity *cbs_entity,
 void dequeue_cbs_entity(struct sched_cbs_entity *cbs_entity,
 			struct cbs_rq *cbs_rq)
 {
-    raw_spin_lock(&cbs_rq->lock);
+	raw_spin_lock(&cbs_rq->lock);
 
-	if (RB_EMPTY_NODE(&cbs_entity->position_node))
+	if (RB_EMPTY_NODE(&cbs_entity->position_node)) {
+		raw_spin_unlock(&cbs_rq->lock);
 		return;
+	}
 
 	rb_erase_cached(&cbs_entity->position_node, &cbs_rq->root);
 
@@ -81,7 +88,6 @@ void dequeue_cbs_entity(struct sched_cbs_entity *cbs_entity,
 	cbs_rq->cbs_nr_running--;
 
 	raw_spin_unlock(&cbs_rq->lock);
-
 }
 
 struct sched_cbs_entity *pick_next_cbs_entity(struct cbs_rq *cbs_rq)
@@ -123,14 +129,12 @@ void __setparam_cbs(struct task_struct *p, const struct sched_attr *attr)
 
 		// Budget timer iniitialization and hook to callback function
 		hrtimer_setup(&cbs_entity->budget_control_timer,
-              cbs_budget_timer_callback,
-              CLOCK_MONOTONIC,
-              HRTIMER_MODE_REL);
+			      cbs_budget_timer_callback, CLOCK_MONOTONIC,
+			      HRTIMER_MODE_REL);
 		cbs_entity->budget_control_timer.function =
 			cbs_budget_timer_callback;
 	}
 }
-
 
 void pause_timer_account_remaining_budget(struct sched_cbs_entity *cbs_entity)
 {
@@ -162,9 +166,12 @@ void set_server_task_absolute_deadline(struct sched_cbs_entity *cbs_entity,
 {
 	if (cbs_entity->is_cbs_server) {
 		u64 threshold_budget =
-			(cbs_entity->absolute_deadline - time_now) * cbs_entity->max_capacity;
+			(cbs_entity->absolute_deadline - time_now) *
+			cbs_entity->max_capacity;
 
-		if (cbs_entity->remaining_runtime * cbs_entity->declared_period >= threshold_budget) {
+		if (cbs_entity->remaining_runtime *
+			    cbs_entity->declared_period >=
+		    threshold_budget) {
 			cbs_entity->absolute_deadline =
 				time_now + cbs_entity->declared_period;
 			cbs_entity->remaining_runtime =
