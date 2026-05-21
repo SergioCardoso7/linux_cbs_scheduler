@@ -7,9 +7,10 @@
 #include "../sched/sched.h"
 #include "cbs_rq.h"
 #include "cbs_task.h"
+#include "trace.h"
 
 void enqueue_cbs_entity(struct sched_cbs_entity *cbs_entity,
-			struct cbs_rq *cbs_rq);
+			struct cbs_rq *cbs_rq, int flags);
 void dequeue_cbs_entity(struct sched_cbs_entity *cbs_entity,
 			struct cbs_rq *cbs_rq);
 struct task_struct *__pick_task_cbs(struct cbs_rq *cbs_rq);
@@ -19,6 +20,8 @@ void pause_timer_account_remaining_budget(struct sched_cbs_entity *cbs_entity);
 void start_cbs_budget_timer(struct sched_cbs_entity *cbs_entity);
 void set_server_task_absolute_deadline(struct sched_cbs_entity *cbs_entity,
 				       u64 time_now);
+void trace_enqueue(struct task_struct *p);
+void trace_dequeue(struct task_struct *p);
 
 #define __node_2_cbs_entity(node) \
 	rb_entry_safe((node), struct sched_cbs_entity, position_node)

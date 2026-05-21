@@ -7,12 +7,21 @@
 /*
 * Callback function when the budget expires
 */
-
 static enum hrtimer_restart cbs_budget_timer_callback(struct hrtimer *timer)
 {
 	struct sched_cbs_entity *cbs_entity = container_of(
 		timer, struct sched_cbs_entity, budget_control_timer);
+
+	if(!cbs_entity){
+		return HRTIMER_NORESTART;
+	}
+	
 	struct task_struct *task_struct = cbs_task_of(cbs_entity);
+
+	if(!task_struct){
+		return HRTIMER_NORESTART;
+	}
+
 	struct rq *rq;
 	struct rq_flags rf;
 
@@ -20,9 +29,6 @@ static enum hrtimer_restart cbs_budget_timer_callback(struct hrtimer *timer)
 		"[CBS][BUDGET_EXPIRE] pid=%d comm=%s deadline=%llu runtime=%lld\n",
 		task_struct->pid, task_struct->comm,
 		cbs_entity->absolute_deadline, cbs_entity->remaining_runtime);
-
-	if (!task_struct)
-		return HRTIMER_NORESTART;
 
 	rq = task_rq_lock(task_struct, &rf);
 
@@ -37,7 +43,7 @@ static enum hrtimer_restart cbs_budget_timer_callback(struct hrtimer *timer)
 		task_struct->pid, cbs_entity->absolute_deadline,
 		cbs_entity->remaining_runtime);
 
-	enqueue_cbs_entity(cbs_entity, &rq->cbs);
+	enqueue_cbs_entity(cbs_entity, &rq->cbs, 0);
 
 	task_rq_unlock(rq, task_struct, &rf);
 
@@ -52,7 +58,7 @@ static enum hrtimer_restart cbs_budget_timer_callback(struct hrtimer *timer)
 }
 
 void enqueue_cbs_entity(struct sched_cbs_entity *cbs_entity,
-			struct cbs_rq *cbs_rq)
+			struct cbs_rq *cbs_rq, int flags)
 {
 	raw_spin_lock(&cbs_rq->lock);
 	/* 
@@ -62,7 +68,9 @@ void enqueue_cbs_entity(struct sched_cbs_entity *cbs_entity,
 	*/
 	u64 time_now = ktime_get_ns();
 
-	if (cbs_entity->absolute_deadline == 0) {
+	bool is_hard_periodic_activation = !cbs_entity->is_cbs_server && (flags & ENQUEUE_WAKEUP);
+
+	if (cbs_entity->absolute_deadline == 0 || is_hard_periodic_activation) {
 		cbs_entity->absolute_deadline =
 			time_now + cbs_entity->relative_deadline;
 	} else {
@@ -119,6 +127,8 @@ struct sched_cbs_entity *pick_next_cbs_entity(struct cbs_rq *cbs_rq)
 void __setparam_cbs(struct task_struct *p, const struct sched_attr *attr)
 {
 	struct sched_cbs_entity *cbs_entity = &p->cbs;
+
+	RB_CLEAR_NODE(&cbs_entity->position_node);
 
 	// initialization of static properties
 	cbs_entity->max_capacity = attr->sched_runtime;
@@ -204,4 +214,16 @@ void set_server_task_absolute_deadline(struct sched_cbs_entity *cbs_entity,
 			cbs_entity->absolute_deadline,
 			cbs_entity->remaining_runtime);
 	}
+}
+
+void trace_enqueue(struct task_struct *p){
+#ifdef CONFIG_MOKER_TRACING
+	moker_trace(ENQUEUE_RQ, p, -1);
+#endif
+}
+
+void trace_dequeue(struct task_struct *p){
+#ifdef CONFIG_MOKER_TRACING
+	moker_trace(DEQUEUE_RQ, p, -1);
+#endif
 }
