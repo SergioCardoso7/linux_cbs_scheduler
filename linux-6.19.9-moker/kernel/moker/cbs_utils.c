@@ -119,7 +119,8 @@ void __setparam_cbs(struct task_struct *p, const struct sched_attr *attr)
 	RB_CLEAR_NODE(&cbs_entity->position_node);
 
 	// initialization of static properties
-	cbs_entity->max_capacity = attr->sched_runtime;
+	cbs_entity->max_capacity =
+		attr->sched_runtime; // need to add some padding since calibration might make the real runtime slightly bigger than max capacity
 	cbs_entity->relative_deadline = attr->sched_deadline;
 	cbs_entity->declared_period = attr->sched_period;
 
@@ -182,21 +183,25 @@ void set_server_task_absolute_deadline(struct sched_cbs_entity *cbs_entity,
 			"[CBS][BEG_SET_SERVER_TASK_ABSOLUTE_DEADLINE] deadline=%llu now=%llu rem_runtime=%lld\n",
 			cbs_entity->absolute_deadline, time_now,
 			cbs_entity->remaining_runtime);
+		
+		// To avoid overflows since we are multiplying large numbers (in ns) we use 128 bits sized variables to do the comparison
+		__uint128_t threshold_budget =
+			(__uint128_t)(cbs_entity->absolute_deadline -
+				      time_now) *
+			cbs_entity->max_capacity;
 
-		if (cbs_entity->remaining_runtime == 0) {
+		__uint128_t compare_instant =
+			(__uint128_t)cbs_entity->remaining_runtime *
+			cbs_entity->declared_period;
+
+		if (compare_instant >= threshold_budget) {
 			cbs_entity->absolute_deadline =
 				time_now + cbs_entity->declared_period;
 			cbs_entity->remaining_runtime =
 				cbs_entity->max_capacity;
 		}
 
-		u64 threshold_budget =
-			(cbs_entity->absolute_deadline - time_now) *
-			cbs_entity->max_capacity;
-
-		if (cbs_entity->remaining_runtime *
-			    cbs_entity->declared_period >=
-		    threshold_budget) {
+		if (cbs_entity->remaining_runtime == 0) {
 			cbs_entity->absolute_deadline =
 				time_now + cbs_entity->declared_period;
 			cbs_entity->remaining_runtime =
