@@ -20,9 +20,11 @@ struct sched_cbs_entity {
     
     s64             remaining_runtime; // this is the server's remaining budget 
     u64             absolute_deadline;
+    
+    u64             activation_time;
+    
     unsigned int    id;
     bool            is_cbs_server;
-    
 };
 
 #endif

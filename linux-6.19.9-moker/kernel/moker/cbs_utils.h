@@ -10,18 +10,19 @@
 #include "trace.h"
 
 void enqueue_cbs_entity(struct sched_cbs_entity *cbs_entity,
-			struct cbs_rq *cbs_rq, int flags);
+			struct cbs_rq *cbs_rq);
 void dequeue_cbs_entity(struct sched_cbs_entity *cbs_entity,
 			struct cbs_rq *cbs_rq);
 struct task_struct *__pick_task_cbs(struct cbs_rq *cbs_rq);
 struct sched_cbs_entity *pick_next_cbs_entity(struct cbs_rq *cbs_rq);
 void __setparam_cbs(struct task_struct *p, const struct sched_attr *attr);
-void pause_timer_account_remaining_budget(struct sched_cbs_entity *cbs_entity);
+void pause_timer(struct sched_cbs_entity *cbs_entity);
 void start_cbs_budget_timer(struct sched_cbs_entity *cbs_entity);
 void set_server_task_absolute_deadline(struct sched_cbs_entity *cbs_entity,
 				       u64 time_now);
 void trace_enqueue(struct task_struct *p);
 void trace_dequeue(struct task_struct *p);
+void account_update_remaining_time(struct task_struct *p);
 
 #define __node_2_cbs_entity(node) \
 	rb_entry_safe((node), struct sched_cbs_entity, position_node)

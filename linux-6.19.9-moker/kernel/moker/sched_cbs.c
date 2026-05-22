@@ -47,23 +47,42 @@ static void wakeup_preempt_cbs(struct rq *rq, struct task_struct *p, int flags)
 
 static void enqueue_task_cbs(struct rq *rq, struct task_struct *p, int flags)
 {
+	struct sched_cbs_entity *cbs_entity = &p->cbs;
+
+	u64 time_now = ktime_get_ns();
 	trace_printk(
-		"[CBS][ENQUEUE_BEFORE] pid=%d abs_deadline=%llu rem_runtime=%lld on_rq=%d rq->nr_running=%u cbs_nr_running=%u flags=%x\n",
-		p->pid, p->cbs.absolute_deadline, p->cbs.remaining_runtime,
+		"[CBS][ENQUEUE_BEFORE] pid=%d abs_deadline=%llu time_now=%llu rem_runtime=%lld on_rq=%d rq->nr_running=%u cbs_nr_running=%u flags=%x\n",
+		p->pid, p->cbs.absolute_deadline, time_now,p->cbs.remaining_runtime,
 		p->on_rq, rq->nr_running, rq->cbs.cbs_nr_running, flags);
 
-	enqueue_cbs_entity(&p->cbs, &rq->cbs, flags);
+	bool first_activation = cbs_entity->absolute_deadline == 0;
+
+	cbs_entity->activation_time = time_now;
+
+	if (first_activation) {
+		cbs_entity->absolute_deadline =
+			time_now + cbs_entity->relative_deadline;
+		cbs_entity->remaining_runtime = cbs_entity->max_capacity;
+	} else {
+		if (cbs_entity->is_cbs_server) {
+			set_server_task_absolute_deadline(cbs_entity, time_now);
+		} else {
+			cbs_entity->absolute_deadline =
+				time_now + cbs_entity->relative_deadline;
+			cbs_entity->remaining_runtime =
+				cbs_entity->max_capacity;
+		}
+	}
+
+	enqueue_cbs_entity(&p->cbs, &rq->cbs);
 	add_nr_running(rq, 1);
+
 	trace_enqueue(p);
 
 	trace_printk(
 		"[CBS][ENQUEUE_AFTER] pid=%d abs_deadline=%llu rem_runtime=%lld on_rq=%d rq->nr_running=%u cbs_nr_running=%u flags=%x\n",
-		p->pid, p->cbs.absolute_deadline,
-		p->cbs.remaining_runtime, p->on_rq, rq->nr_running,
-		rq->cbs.cbs_nr_running, flags);
-
-	// need for a call to resched (if the newly enqueued task has an earlier deadline)
-	// wakeup_preempt_cbs(rq, p, 0);
+		p->pid, p->cbs.absolute_deadline, p->cbs.remaining_runtime,
+		p->on_rq, rq->nr_running, rq->cbs.cbs_nr_running, flags);
 }
 
 static bool dequeue_task_cbs(struct rq *rq, struct task_struct *p, int flags)
@@ -84,9 +103,6 @@ static bool dequeue_task_cbs(struct rq *rq, struct task_struct *p, int flags)
 
 	return true;
 }
-/*
-* Preempt the current task with a newly woken task if needed:
-*/
 
 static struct task_struct *pick_task_cbs(struct rq *rq, struct rq_flags *rf)
 {
@@ -104,6 +120,17 @@ static struct task_struct *pick_task_cbs(struct rq *rq, struct rq_flags *rf)
 	return next;
 }
 
+static void update_curr_cbs(struct rq *rq)
+{
+	struct task_struct *curr = rq->curr;
+	struct sched_cbs_entity *cbs_entity = &curr->cbs;
+
+	if (curr->policy != SCHED_CBS || !cbs_entity->is_cbs_server)
+		return;
+
+	account_update_remaining_time(curr);
+}
+
 /*
     this function is called whenever a task leaves execution context,
     either because of dequeing (task sleeps, blocks, exits, etc) or simple preemption
@@ -116,42 +143,25 @@ static void put_prev_task_cbs(struct rq *rq, struct task_struct *p,
 {
 	trace_printk(
 		"[CBS][PUT_PREV] pid=%d next=%s on_rq=%d runtime_before=%lld\n",
-		p->pid, next ? next->comm : "NULL" ,p->on_rq, p->cbs.remaining_runtime);
+		p->pid, next ? next->comm : "NULL", p->on_rq,
+		p->cbs.remaining_runtime);
 
 	struct sched_cbs_entity *cbs_entity = &p->cbs;
 
 	// Either dequeing or simple preemption, we need to cancel the timer and account the remaining runtime (budget)
 	if (cbs_entity->is_cbs_server) {
-		pause_timer_account_remaining_budget(cbs_entity);
-
-		trace_printk(
-			"[CBS][ACCOUNT_AFTER_PAUSE] pid=%d remaining_runtime=%lld\n",
-			p->pid, p->cbs.remaining_runtime);
-	}
-	/*
-	// This means that this was a simple preemption (task still in runqueue)
-	// if it was a preemption caused by a dequeue (sleeping, blocked, exited),
-	// the dequeue_task function would be called first and the task would no longer be in the runqueue
-	if (p->on_rq && cbs_entity->is_cbs_server) {
-		// Removal and re-introduction into rbtree
-		// This is done so it can pass through the enqueue logic again
-		// and therefore (if applicable) get it replenished budget and new abs. deadline (and new position in the tree)
-		// Later on if it gets called to run it will pass by set_next_task
-		// which will restart the budget timer with the updated budget
-		trace_printk(
-			"[CBS][PUT_PREV_BEFORE_REQUEUE] pid=%d abs_deadline=%llu rem_runtime=%lld\n",
-			p->pid, p->cbs.absolute_deadline,
-			p->cbs.remaining_runtime);
-			
+		pause_timer(cbs_entity);
+		// Only requeueing if still on runqueue (simple preemption case)
+		if (p->on_rq) {
 			dequeue_cbs_entity(cbs_entity, &rq->cbs);
-			enqueue_cbs_entity(cbs_entity, &rq->cbs, 0);
-			
+			set_server_task_absolute_deadline(
+				cbs_entity, cbs_entity->activation_time);
+			enqueue_cbs_entity(cbs_entity, &rq->cbs);
 			trace_printk(
-				"[CBS][PUT_PREV_AFTER_REQUEUE] pid=%d abs_deadline=%llu rem_runtime=%lld\n",
-				p->pid, p->cbs.absolute_deadline,
-				p->cbs.remaining_runtime);
-			}
-			*/
+				"[CBS][ACCOUNT_AFTER_PAUSE_TIMER_AND_UPDATE] pid=%d remaining_runtime=%lld\n",
+				p->pid, p->cbs.remaining_runtime);
+		}
+	}
 }
 
 /*
@@ -164,14 +174,14 @@ static void set_next_task_cbs(struct rq *rq, struct task_struct *p, bool first)
 
 	trace_printk(
 		"[CBS][SET_NEXT_BEFORE_TIMER_START] pid=%d abs_deadline=%llu rem_runtime=%lld first=%d\n",
-		p->pid, p->cbs.absolute_deadline,
-		p->cbs.remaining_runtime, first);
+		p->pid, p->cbs.absolute_deadline, p->cbs.remaining_runtime,
+		first);
 
 	start_cbs_budget_timer(cbs_entity);
 
-	// change this print because we are not printing the actual remaining_runtime because we did not fetch it
-	trace_printk("[CBS][SET_NEXT_AFTER_TIMER_START] pid=%d rem_runtime=%lld\n",
-		     p->pid, p->cbs.remaining_runtime);
+	trace_printk(
+		"[CBS][SET_NEXT_AFTER_TIMER_START] pid=%d rem_runtime=%lld\n",
+		p->pid, p->cbs.remaining_runtime);
 }
 
 static int select_task_rq_cbs(struct task_struct *p, int cpu, int flags)
@@ -180,14 +190,12 @@ static int select_task_rq_cbs(struct task_struct *p, int cpu, int flags)
 }
 static void task_tick_cbs(struct rq *rq, struct task_struct *p, int queued)
 {
+	update_curr_cbs(rq);
 }
 static void prio_changed_cbs(struct rq *rq, struct task_struct *p, u64 oldprio)
 {
 }
 static void switched_to_cbs(struct rq *rq, struct task_struct *p)
-{
-}
-static void update_curr_cbs(struct rq *rq)
 {
 }
 
