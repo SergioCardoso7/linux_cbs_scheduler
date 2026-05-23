@@ -37,6 +37,7 @@ struct task {
 	unsigned long long O; //first job offset
 	unsigned long long D; //relative deadline
 	unsigned int njobs; //number of jobs
+	unsigned long long flag; //For indicating if hard or soft task, 0 -> hard, 1-> soft
 };
 
 #endif

@@ -3,7 +3,7 @@
 void do_work(unsigned long long exec)
 {
 	unsigned long long i, ten_ns;
-	ten_ns = (unsigned long long)((double) exec / 3.8873);
+	ten_ns = (unsigned long long)((double)exec / 3.91);
 	for (i = 0; i < ten_ns; i++)
 	{
 		asm volatile("nop" ::);
@@ -119,7 +119,7 @@ int sched_setattr(pid_t pid,
 int main(int argc, char **argv)
 {
 	// struct sched_param param;
-	unsigned long long C, T, O, D, time0, release;
+	unsigned long long C, T, O, D, flag, time0, release;
 	unsigned int task_id, njobs, i = 0;
 
 	struct timespec r;
@@ -131,9 +131,10 @@ int main(int argc, char **argv)
 	time0 = (unsigned long long)atoll(argv[5]);
 	D = (unsigned long long)atoll(argv[6]);
 	njobs = atoi(argv[7]);
+	flag = (unsigned long long)atoll(argv[8]);
 
-	//printf("Task(%d,%d): after SCHED_CBS\n", task_id, getpid());
-	
+	// printf("Task(%d,%d): after SCHED_CBS\n", task_id, getpid());
+
 	printf("Task(%d,%d): set ID\n", task_id, getpid());
 	if ((syscall(SYS_MOKER_ID, task_id)) < 0)
 	{
@@ -141,37 +142,34 @@ int main(int argc, char **argv)
 		exit(-1);
 	}
 	printf("Task(%d,%d): before SCHED_CBS\n", task_id, getpid());
-	
+
 	release = time0 + O;
+	struct sched_attr attr = {
+		.size = sizeof(struct sched_attr),
+		.sched_policy = SCHED_CBS,
+		.sched_flags = flag,
+		.sched_runtime = C,	 // max_capacity
+		.sched_deadline = D, // relative_deadline
+		.sched_period = T,	 // declared_period
+	};
+
+	if (sched_setattr(0, &attr, 0) < 0)
+	{
+		perror("sched_setattr");
+		exit(-1);
+	}
+
 	for (i = 0; i < njobs; i++)
 	{
 		r.tv_sec = release / NSEC_PER_SEC;
 		r.tv_nsec = release % NSEC_PER_SEC;
-		
-		printf("Task(%d,%d,%d): sleeping until release %llu\n", task_id, getpid(), i, release);
+
+		//printf("Task(%d,%d,%d): sleeping until release %llu\n", task_id, getpid(), i, release);
 		clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &r, NULL);
-		printf("Task(%d,%d,%d): ready for execution\n", task_id, getpid(), i);
-
-		if (i == 0)
-		{
-			struct sched_attr attr = {
-				.size = sizeof(struct sched_attr),
-				.sched_policy = SCHED_CBS,
-				.sched_flags = 0,
-				.sched_runtime = C,	 // max_capacity
-				.sched_deadline = D, // relative_deadline
-				.sched_period = T,	 // declared_period
-			};
-
-			if (sched_setattr(0, &attr, 0) < 0)
-			{
-				perror("sched_setattr");
-				exit(-1);
-			}
-		}
+		//printf("Task(%d,%d,%d): ready for execution\n", task_id, getpid(), i);
 
 		do_work(C);
-		
+
 		// computes the next release
 		release += T;
 	}

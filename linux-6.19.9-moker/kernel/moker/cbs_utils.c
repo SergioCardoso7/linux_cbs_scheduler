@@ -17,51 +17,41 @@ static enum hrtimer_restart cbs_budget_timer_callback(struct hrtimer *timer)
 	}
 
 	struct task_struct *task_struct = cbs_task_of(cbs_entity);
-
-	if (!task_struct) {
-		return HRTIMER_NORESTART;
-	}
-
 	struct rq *rq;
 	struct rq_flags rf;
 
 	trace_printk(
-		"[CBS][BUDGET_EXPIRE] pid=%d comm=%s deadline=%llu runtime=%lld\n",
-		task_struct->pid, task_struct->comm,
-		cbs_entity->absolute_deadline, cbs_entity->remaining_runtime);
+		"[CBS][BUDGET_EXPIRE] pid=%d abs_deadline=%llu",
+		task_struct->pid, cbs_entity->absolute_deadline);
 
 	rq = task_rq_lock(task_struct, &rf);
 
-	dequeue_cbs_entity(cbs_entity, &rq->cbs);
+	// Pushing the deadline of the server just like in the paper officers Baltarejo and Maia
+	// This will avoid being picked again in pick_task_cbs
+	remove_cbs_entity_from_tree(cbs_entity, &rq->cbs);
 
-	// Pushing the deadline and replenishing the server just like in the paper officers Baltarejo and Maia
 	cbs_entity->absolute_deadline += cbs_entity->declared_period;
 	cbs_entity->remaining_runtime = cbs_entity->max_capacity;
 
-	trace_printk(
-		"[CBS][REPLENISH] pid=%d new_deadline=%llu new_runtime=%lld\n",
-		task_struct->pid, cbs_entity->absolute_deadline,
-		cbs_entity->remaining_runtime);
+	ktime_t future_expiry = ns_to_ktime(cbs_entity->max_capacity);
+	hrtimer_set_expires(timer, future_expiry);
 
-	enqueue_cbs_entity(cbs_entity, &rq->cbs);
+	push_cbs_entity_to_tree(cbs_entity, &rq->cbs);
 
-	task_rq_unlock(rq, task_struct, &rf);
+	trace_printk("[CBS][REPLENISH] pid=%d new_abs_deadline=%llu rem_runtime=%llu\n",
+		     task_struct->pid, cbs_entity->absolute_deadline, cbs_entity->remaining_runtime);
 
 	// This call will force the kernel to call __schedule() which in turns calls put_prev_task and set_next_task
 	// In put_prev_task we will cancel the timer and account the remaining budget
 	resched_curr(rq);
-	/*
-	if (task_current(rq, task_struct)) {
-		trace_printk("[CBS][FORCE_RESCHED] pid=%d\n", task_struct->pid);
-		resched_curr(rq);
-	}
-	*/
+
+	task_rq_unlock(rq, task_struct, &rf);
 
 	return HRTIMER_NORESTART;
 }
 
-void enqueue_cbs_entity(struct sched_cbs_entity *cbs_entity,
-			struct cbs_rq *cbs_rq)
+void push_cbs_entity_to_tree(struct sched_cbs_entity *cbs_entity,
+			     struct cbs_rq *cbs_rq)
 {
 	raw_spin_lock(&cbs_rq->lock);
 
@@ -78,8 +68,8 @@ void enqueue_cbs_entity(struct sched_cbs_entity *cbs_entity,
 	raw_spin_unlock(&cbs_rq->lock);
 }
 
-void dequeue_cbs_entity(struct sched_cbs_entity *cbs_entity,
-			struct cbs_rq *cbs_rq)
+void remove_cbs_entity_from_tree(struct sched_cbs_entity *cbs_entity,
+				 struct cbs_rq *cbs_rq)
 {
 	raw_spin_lock(&cbs_rq->lock);
 
@@ -119,25 +109,24 @@ void __setparam_cbs(struct task_struct *p, const struct sched_attr *attr)
 	RB_CLEAR_NODE(&cbs_entity->position_node);
 
 	// initialization of static properties
-	cbs_entity->max_capacity =
-		attr->sched_runtime; // need to add some padding since calibration might make the real runtime slightly bigger than max capacity
+	cbs_entity->max_capacity = attr->sched_runtime;
 	cbs_entity->relative_deadline = attr->sched_deadline;
 	cbs_entity->declared_period = attr->sched_period;
 
-	// Determination if a task is a soft (server)task is if it was passed a max capacity
-	cbs_entity->is_cbs_server = (cbs_entity->max_capacity > 0);
+	// Determinating if a task is a soft(server) task or a hard task
+	cbs_entity->is_cbs_server = attr->sched_flags == 1;
 
 	// initialization of dynamic server properties
 	if (cbs_entity->is_cbs_server) {
-		cbs_entity->server_bandwidth =
-			cbs_entity->max_capacity / cbs_entity->declared_period;
-
 		cbs_entity->remaining_runtime = cbs_entity->max_capacity;
 
 		// The absolute deadline set at zero in the beginning and is used to know if this is an actual new task
 		cbs_entity->absolute_deadline = 0;
 
-		// Budget timer iniitialization and hook to callback function
+		cbs_entity->server_bandwidth =
+			cbs_entity->max_capacity / cbs_entity->declared_period;
+
+		// Budget timer initialization and hook to callback function
 		hrtimer_setup(&cbs_entity->budget_control_timer,
 			      cbs_budget_timer_callback, CLOCK_MONOTONIC,
 			      HRTIMER_MODE_REL);
@@ -148,20 +137,6 @@ void __setparam_cbs(struct task_struct *p, const struct sched_attr *attr)
 
 void pause_timer(struct sched_cbs_entity *cbs_entity)
 {
-	trace_printk("[CBS][PAUSE_TIMER_BEFORE] rem_runtime=%lld\n",
-		     cbs_entity->remaining_runtime);
-
-	ktime_t remaining_time =
-		hrtimer_get_remaining(&cbs_entity->budget_control_timer);
-	s64 remaining_ns = ktime_to_ns(remaining_time);
-
-	if (remaining_ns < 0) {
-		remaining_ns = 0;
-	}
-
-	trace_printk("[CBS][PAUSE_TIMER_AFTER] rem_runtime=%lld\n",
-		     remaining_ns);
-
 	hrtimer_try_to_cancel(&cbs_entity->budget_control_timer);
 }
 
@@ -175,15 +150,23 @@ void start_cbs_budget_timer(struct sched_cbs_entity *cbs_entity)
 		      HRTIMER_MODE_REL);
 }
 
-void set_server_task_absolute_deadline(struct sched_cbs_entity *cbs_entity,
-				       u64 time_now)
+void set_server_task_abs_deadline_and_budget(
+	struct sched_cbs_entity *cbs_entity, u64 time_now)
 {
 	if (cbs_entity->is_cbs_server) {
 		trace_printk(
-			"[CBS][BEG_SET_SERVER_TASK_ABSOLUTE_DEADLINE] deadline=%llu now=%llu rem_runtime=%lld\n",
+			"[CBS][BEFORE_UPDATING_PROPERTIES] abs_deadline=%llu time_now=%llu rem_runtime=%lld\n",
 			cbs_entity->absolute_deadline, time_now,
 			cbs_entity->remaining_runtime);
-		
+
+		// This is done by the timer callback function, in here just in case for safety
+		if (cbs_entity->remaining_runtime <= 0) {
+			cbs_entity->absolute_deadline +=
+				cbs_entity->declared_period;
+			cbs_entity->remaining_runtime =
+				cbs_entity->max_capacity;
+		}
+
 		// To avoid overflows since we are multiplying large numbers (in ns) we use 128 bits sized variables to do the comparison
 		__uint128_t threshold_budget =
 			(__uint128_t)(cbs_entity->absolute_deadline -
@@ -201,40 +184,24 @@ void set_server_task_absolute_deadline(struct sched_cbs_entity *cbs_entity,
 				cbs_entity->max_capacity;
 		}
 
-		if (cbs_entity->remaining_runtime == 0) {
-			cbs_entity->absolute_deadline =
-				time_now + cbs_entity->declared_period;
-			cbs_entity->remaining_runtime =
-				cbs_entity->max_capacity;
-		}
-
 		trace_printk(
-			"[CBS][END_SET_SERVER_TASK_ABSOLUTE_DEADLINE] new_deadline=%llu now=%llu rem_runtime=%lld\n",
+			"[CBS][AFTER_UPDATING_PROPERTIES] new_deadline=%llu time_now=%llu rem_runtime=%lld\n",
 			cbs_entity->absolute_deadline, time_now,
 			cbs_entity->remaining_runtime);
 	}
 }
 
-void account_update_remaining_time(struct task_struct *p)
+s64 get_remaining_runtime_from_timer(struct sched_cbs_entity *cbs_entity)
 {
-	if (!p) {
-		return;
-	}
-
 	ktime_t remaining_time =
-		hrtimer_get_remaining(&p->cbs.budget_control_timer);
+		hrtimer_get_remaining(&cbs_entity->budget_control_timer);
 
 	s64 remaining_ns = ktime_to_ns(remaining_time);
 
 	if (remaining_ns < 0)
 		remaining_ns = 0;
 
-	p->cbs.remaining_runtime = remaining_ns;
-	/*
-	trace_printk(
-		"[CBS][ACCOUNT_REM_RUNTIME] pid=%d rem_runtime=%lld on_rq=%d\n",
-		p->pid, p->cbs.remaining_runtime, p->on_rq);
-	*/
+	return remaining_ns;
 }
 
 void trace_enqueue(struct task_struct *p)
