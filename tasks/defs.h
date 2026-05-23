@@ -40,4 +40,19 @@ struct task {
 	unsigned long long flag; //For indicating if hard or soft task, 0 -> hard, 1-> soft
 };
 
+// Format of each line in the server taskset file:
+//   id, C, O, flag,
+// id   — job identifier (used for the first job to register moker_id)
+// C    — execution time for this job (nanoseconds)
+// O    — arrival offset from time0 (nanoseconds, OFFSET is added automatically)
+// flag — reserved (kept for symmetry with the task format)
+
+struct server_job {
+	int            id;
+	unsigned long long C;
+	unsigned long long O;
+	unsigned long long flag;
+};
+
+
 #endif

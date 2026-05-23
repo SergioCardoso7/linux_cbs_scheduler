@@ -20,9 +20,8 @@ static enum hrtimer_restart cbs_budget_timer_callback(struct hrtimer *timer)
 	struct rq *rq;
 	struct rq_flags rf;
 
-	trace_printk(
-		"[CBS][BUDGET_EXPIRE] pid=%d abs_deadline=%llu",
-		task_struct->pid, cbs_entity->absolute_deadline);
+	trace_printk("[CBS][BUDGET_EXPIRE] pid=%d | abs_deadline=%llu\n",
+		     task_struct->pid, cbs_entity->absolute_deadline);
 
 	rq = task_rq_lock(task_struct, &rf);
 
@@ -38,8 +37,10 @@ static enum hrtimer_restart cbs_budget_timer_callback(struct hrtimer *timer)
 
 	push_cbs_entity_to_tree(cbs_entity, &rq->cbs);
 
-	trace_printk("[CBS][REPLENISH] pid=%d new_abs_deadline=%llu rem_runtime=%llu\n",
-		     task_struct->pid, cbs_entity->absolute_deadline, cbs_entity->remaining_runtime);
+	trace_printk(
+		"[CBS][REPLENISH] pid=%d | new_abs_deadline=%llu | rem_runtime=%llu\n",
+		task_struct->pid, cbs_entity->absolute_deadline,
+		cbs_entity->remaining_runtime);
 
 	// This call will force the kernel to call __schedule() which in turns calls put_prev_task and set_next_task
 	// In put_prev_task we will cancel the timer and account the remaining budget
@@ -155,7 +156,7 @@ void set_server_task_abs_deadline_and_budget(
 {
 	if (cbs_entity->is_cbs_server) {
 		trace_printk(
-			"[CBS][BEFORE_UPDATING_PROPERTIES] abs_deadline=%llu time_now=%llu rem_runtime=%lld\n",
+			"[CBS][BEFORE_UPDATING_PROPERTIES] abs_deadline=%llu | time_now=%llu | rem_runtime=%lld\n",
 			cbs_entity->absolute_deadline, time_now,
 			cbs_entity->remaining_runtime);
 
@@ -163,6 +164,14 @@ void set_server_task_abs_deadline_and_budget(
 		if (cbs_entity->remaining_runtime <= 0) {
 			cbs_entity->absolute_deadline +=
 				cbs_entity->declared_period;
+			cbs_entity->remaining_runtime =
+				cbs_entity->max_capacity;
+		}
+
+		// Fresh activation and to avoid underflows
+		if (cbs_entity->absolute_deadline == 0) {
+			cbs_entity->absolute_deadline =
+				time_now + cbs_entity->declared_period;
 			cbs_entity->remaining_runtime =
 				cbs_entity->max_capacity;
 		}
@@ -185,7 +194,7 @@ void set_server_task_abs_deadline_and_budget(
 		}
 
 		trace_printk(
-			"[CBS][AFTER_UPDATING_PROPERTIES] new_deadline=%llu time_now=%llu rem_runtime=%lld\n",
+			"[CBS][AFTER_UPDATING_PROPERTIES] new_deadline=%llu | time_now=%llu | rem_runtime=%lld\n",
 			cbs_entity->absolute_deadline, time_now,
 			cbs_entity->remaining_runtime);
 	}

@@ -27,11 +27,11 @@ static void enqueue_task_cbs(struct rq *rq, struct task_struct *p, int flags)
 	trace_enqueue(p);
 
 	trace_printk(
-		"[ENQ_A] pid=%d cbs_server=%s activ_time=%llu abs_dl=%llu budget=%lld on_rq=%d rq_nr_running=%u cbs_nr_running=%u flags=%x\n",
+		"[ENQ_A] pid=%d | cbs_server=%s | activ_time=%llu | abs_dl=%llu | budget=%lld | on_rq=%d | cbs_nr_running=%u | flags=%x\n",
 		p->pid, cbs_entity->is_cbs_server ? "yes" : "no",
 		cbs_entity->activation_time, p->cbs.absolute_deadline,
-		p->cbs.remaining_runtime, p->on_rq, rq->nr_running,
-		rq->cbs.cbs_nr_running, flags);
+		p->cbs.remaining_runtime, p->on_rq, rq->cbs.cbs_nr_running,
+		flags);
 }
 
 static bool dequeue_task_cbs(struct rq *rq, struct task_struct *p, int flags)
@@ -41,10 +41,10 @@ static bool dequeue_task_cbs(struct rq *rq, struct task_struct *p, int flags)
 	trace_dequeue(p);
 
 	trace_printk(
-		"[DEQ_A] pid=%d cbs_server=%s abs_dl=%llu budget=%lld on_rq=%d rq_nr_running=%u cbs_nr_running=%u flags=%x\n",
+		"[DEQ_A] pid=%d | cbs_server=%s | abs_dl=%llu | budget=%lld | on_rq=%d | cbs_nr_running=%u | flags=%x\n",
 		p->pid, p->cbs.is_cbs_server ? "yes" : "no",
 		p->cbs.absolute_deadline, p->cbs.remaining_runtime, p->on_rq,
-		rq->nr_running, rq->cbs.cbs_nr_running, flags);
+		rq->cbs.cbs_nr_running, flags);
 
 	return true;
 }
@@ -58,7 +58,7 @@ static struct task_struct *pick_task_cbs(struct rq *rq, struct rq_flags *rf)
 	}
 	struct task_struct *next = cbs_task_of(next_entity);
 	trace_printk(
-		"[PICK] picked pid=%d abs_deadline=%llu rem_runtime=%lld\n",
+		"[PICK] picked pid=%d | abs_deadline=%llu | rem_runtime=%lld\n",
 		next->pid, next->cbs.absolute_deadline,
 		next->cbs.remaining_runtime);
 
@@ -93,7 +93,7 @@ static void put_prev_task_cbs(struct rq *rq, struct task_struct *p,
 		}
 	}
 	trace_printk(
-		"[PUT_PREV] prev_pid=%d next_pid=%d on_rq=%d prev_rem_budget=%lld\n",
+		"[PUT_PREV] prev_pid=%d | next_pid=%d | on_rq=%d | prev_rem_budget=%lld\n",
 		p->pid, next->pid, p->on_rq, p->cbs.remaining_runtime);
 }
 
@@ -108,7 +108,7 @@ static void set_next_task_cbs(struct rq *rq, struct task_struct *p, bool first)
 	start_cbs_budget_timer(cbs_entity);
 
 	trace_printk(
-		"[SET_NEXT] pid=%d abs_deadline = %llurem_runtime=%lld first=%d\n",
+		"[SET_NEXT] pid=%d | abs_deadline = %llu | rem_runtime=%lld | first=%d\n",
 		p->pid, p->cbs.absolute_deadline, p->cbs.remaining_runtime,
 		first);
 }
@@ -135,7 +135,7 @@ static void wakeup_preempt_cbs(struct rq *rq, struct task_struct *p, int flags)
 		raw_spin_lock(&rq->cbs.lock);
 
 		trace_printk(
-			"[WAKEUP_PREEMPT] Comparing deadlines: (pid=%d)curr->dl=%llu (pid=%d)incoming->dl=%llu\n",
+			"[WAKEUP_PREEMPT] Comparing deadlines: (pid=%d)curr->dl=%llu | (pid=%d)incoming->dl=%llu\n",
 			rq->curr->pid, rq->curr->cbs.absolute_deadline, p->pid,
 			p->cbs.absolute_deadline);
 

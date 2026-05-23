@@ -3,7 +3,7 @@
 void do_work(unsigned long long exec)
 {
 	unsigned long long i, ten_ns;
-	ten_ns = (unsigned long long)((double)exec / 3.91);
+	ten_ns = (unsigned long long)((double)exec / 3.89);
 	for (i = 0; i < ten_ns; i++)
 	{
 		asm volatile("nop" ::);
@@ -144,30 +144,33 @@ int main(int argc, char **argv)
 	printf("Task(%d,%d): before SCHED_CBS\n", task_id, getpid());
 
 	release = time0 + O;
-	struct sched_attr attr = {
-		.size = sizeof(struct sched_attr),
-		.sched_policy = SCHED_CBS,
-		.sched_flags = flag,
-		.sched_runtime = C,	 // max_capacity
-		.sched_deadline = D, // relative_deadline
-		.sched_period = T,	 // declared_period
-	};
-
-	if (sched_setattr(0, &attr, 0) < 0)
-	{
-		perror("sched_setattr");
-		exit(-1);
-	}
 
 	for (i = 0; i < njobs; i++)
 	{
 		r.tv_sec = release / NSEC_PER_SEC;
 		r.tv_nsec = release % NSEC_PER_SEC;
 
-		//printf("Task(%d,%d,%d): sleeping until release %llu\n", task_id, getpid(), i, release);
+		// printf("Task(%d,%d,%d): sleeping until release %llu\n", task_id, getpid(), i, release);
 		clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &r, NULL);
-		//printf("Task(%d,%d,%d): ready for execution\n", task_id, getpid(), i);
+		// printf("Task(%d,%d,%d): ready for execution\n", task_id, getpid(), i);
 
+		if (i == 0)
+		{
+			struct sched_attr attr = {
+				.size = sizeof(struct sched_attr),
+				.sched_policy = SCHED_CBS,
+				.sched_flags = flag,
+				.sched_runtime = C,	 // max_capacity
+				.sched_deadline = D, // relative_deadline
+				.sched_period = T,	 // declared_period
+			};
+
+			if (sched_setattr(0, &attr, 0) < 0)
+			{
+				perror("sched_setattr");
+				exit(-1);
+			}
+		}
 		do_work(C);
 
 		// computes the next release

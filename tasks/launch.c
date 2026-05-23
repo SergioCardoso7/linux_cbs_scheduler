@@ -136,12 +136,15 @@ int main(int argc, char *argv[])
 	struct task tasks[NR_TASKS];
 	unsigned int ntasks;
 	char arg[8][30];
+	char time0_str[30];
 	int status, i;
 	struct timespec t;
 	unsigned long long time0;
+	int total_children = 0;
 	///////////////////////////////////////////////////////////////
-	if (argc != 2)
+	if (argc < 2)
 		exit(0);
+
 	get_taskset_config(argv[1], &ntasks, tasks);
 	print_tasks(tasks, ntasks);
 
@@ -159,8 +162,9 @@ int main(int argc, char *argv[])
 	time0 += (unsigned long long)(5 * OFFSET); // for safety purposes
 
 	printf("LAUNCH: time 0: %llu\n", time0);
+	sprintf(time0_str, "%llu", time0);
 
-	printf("LAUNCH: Forking tasks\n");
+	printf("LAUNCH: Forking periodic tasks\n");
 	for (i = 0; i < ntasks; i++)
 	{
 		sprintf(arg[0], "%d", tasks[i].id);
@@ -172,23 +176,43 @@ int main(int argc, char *argv[])
 		sprintf(arg[6], "%d", tasks[i].njobs);
 		sprintf(arg[7], "%llu", tasks[i].flag);
 
-		pid_tasks[i] = fork();
-		if (pid_tasks[i] == 0)
+		pid_tasks[total_children] = fork();
+		if (pid_tasks[total_children] == 0)
 		{
 			execl("./task", "task", arg[0], arg[1], arg[2], arg[3], arg[4], arg[5], arg[6], arg[7], NULL);
 			printf("Error: execv: task\n");
 			exit(0);
 		}
+		total_children++;
 	}
-	printf("LAUNCH: Waiting ...\n");
-	for (i = 0; i < ntasks; i++)
+
+	int nservers = argc - 2;
+	if (nservers > 0)
+		printf("LAUNCH: Forking %d server task(s)\n", nservers);
+
+	for (i = 0; i < nservers; i++)
+	{
+		// argv[i + 2] is the server taskset file for this server
+		pid_tasks[total_children] = fork();
+		if (pid_tasks[total_children] == 0)
+		{
+			execl("./server_task", "server_task", argv[i + 2], time0_str, NULL);
+			perror("Error: execv: server_task");
+			exit(0);
+		}
+		total_children++;
+	}
+
+	// Waiting for all children (periodic + server tasks)
+	printf("LAUNCH: Waiting for %d task(s)...\n", total_children);
+	for (i = 0; i < total_children; i++)
 	{
 		waitpid(0, &status, 0);
 		if (WIFEXITED(status))
-		{
-			printf("LAUNCH:task:%d: has finished\n", WEXITSTATUS(status));
-		}
+			printf("LAUNCH: task exited with code %d\n",
+				   WEXITSTATUS(status));
 	}
+
 	printf("LAUNCH: Disabling moker tracing\n");
 	if ((syscall(SYS_MOKER_TRACING_ENABLE, 0)) < 0)
 	{
