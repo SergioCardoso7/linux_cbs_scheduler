@@ -152,34 +152,30 @@ void start_cbs_budget_timer(struct sched_cbs_entity *cbs_entity)
 }
 
 void set_server_task_abs_deadline_and_budget(
-	struct sched_cbs_entity *cbs_entity, u64 time_now)
+	struct sched_cbs_entity *cbs_entity, u64 activation_time)
 {
 	if (cbs_entity->is_cbs_server) {
 		trace_printk(
-			"[CBS][BEFORE_UPDATING_PROPERTIES] abs_deadline=%llu | time_now=%llu | rem_runtime=%lld\n",
-			cbs_entity->absolute_deadline, time_now,
+			"[CBS][BEFORE_UPDATING_PROPERTIES] abs_deadline=%llu | activation_time=%llu | rem_runtime=%lld\n",
+			cbs_entity->absolute_deadline, activation_time,
 			cbs_entity->remaining_runtime);
 
 		// This is done by the timer callback function, in here just in case for safety
-		if (cbs_entity->remaining_runtime <= 0) {
-			cbs_entity->absolute_deadline +=
-				cbs_entity->declared_period;
-			cbs_entity->remaining_runtime =
-				cbs_entity->max_capacity;
+		if (cbs_entity->remaining_runtime < 0) {
+			cbs_entity->absolute_deadline += cbs_entity->declared_period;
+			cbs_entity->remaining_runtime = cbs_entity->max_capacity;
 		}
 
 		// Fresh activation and to avoid underflows
 		if (cbs_entity->absolute_deadline == 0) {
-			cbs_entity->absolute_deadline =
-				time_now + cbs_entity->declared_period;
-			cbs_entity->remaining_runtime =
-				cbs_entity->max_capacity;
+			cbs_entity->absolute_deadline = activation_time + cbs_entity->declared_period;
+			cbs_entity->remaining_runtime = cbs_entity->max_capacity;
 		}
 
 		// To avoid overflows since we are multiplying large numbers (in ns) we use 128 bits sized variables to do the comparison
 		__uint128_t threshold_budget =
 			(__uint128_t)(cbs_entity->absolute_deadline -
-				      time_now) *
+				      activation_time) *
 			cbs_entity->max_capacity;
 
 		__uint128_t compare_instant =
@@ -188,14 +184,14 @@ void set_server_task_abs_deadline_and_budget(
 
 		if (compare_instant >= threshold_budget) {
 			cbs_entity->absolute_deadline =
-				time_now + cbs_entity->declared_period;
+				activation_time + cbs_entity->declared_period;
 			cbs_entity->remaining_runtime =
 				cbs_entity->max_capacity;
 		}
 
 		trace_printk(
-			"[CBS][AFTER_UPDATING_PROPERTIES] new_deadline=%llu | time_now=%llu | rem_runtime=%lld\n",
-			cbs_entity->absolute_deadline, time_now,
+			"[CBS][AFTER_UPDATING_PROPERTIES] new_deadline=%llu | activation_time=%llu | rem_runtime=%lld\n",
+			cbs_entity->absolute_deadline, activation_time,
 			cbs_entity->remaining_runtime);
 	}
 }

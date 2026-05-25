@@ -15,8 +15,10 @@ static void enqueue_task_cbs(struct rq *rq, struct task_struct *p, int flags)
 	cbs_entity->activation_time = time_now;
 
 	if (cbs_entity->is_cbs_server) {
+		// Not so basic CBS mechanics
 		set_server_task_abs_deadline_and_budget(cbs_entity, time_now);
 	} else {
+		// Basic EDF mechanics
 		cbs_entity->absolute_deadline =
 			time_now + cbs_entity->relative_deadline;
 	}
@@ -80,17 +82,8 @@ static void put_prev_task_cbs(struct rq *rq, struct task_struct *p,
 	if (cbs_entity->is_cbs_server) {
 		pause_timer(cbs_entity);
 
-		if (p->on_rq) {
-			remove_cbs_entity_from_tree(cbs_entity, &rq->cbs);
-
-			cbs_entity->remaining_runtime =
-				get_remaining_runtime_from_timer(cbs_entity);
-
-			set_server_task_abs_deadline_and_budget(
-				cbs_entity, cbs_entity->activation_time);
-
-			push_cbs_entity_to_tree(cbs_entity, &rq->cbs);
-		}
+		cbs_entity->remaining_runtime =
+			get_remaining_runtime_from_timer(cbs_entity);
 	}
 	trace_printk(
 		"[PUT_PREV] prev_pid=%d | next_pid=%d | on_rq=%d | prev_rem_budget=%lld\n",
@@ -99,7 +92,6 @@ static void put_prev_task_cbs(struct rq *rq, struct task_struct *p,
 
 /*
 * This is a good place to put the budget timer (re)start
-* Account for the new execution time start
 */
 static void set_next_task_cbs(struct rq *rq, struct task_struct *p, bool first)
 {
@@ -175,6 +167,7 @@ DEFINE_SCHED_CLASS(cbs) = {
 	.pick_task = pick_task_cbs,
 	.put_prev_task = put_prev_task_cbs,
 	.set_next_task = set_next_task_cbs,
+	// Only used the above ones
 	.select_task_rq = select_task_rq_cbs,
 	.set_cpus_allowed = set_cpus_allowed_common,
 	.task_tick = task_tick_cbs,

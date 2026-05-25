@@ -159,7 +159,7 @@ int main(int argc, char **argv)
 			struct sched_attr attr = {
 				.size = sizeof(struct sched_attr),
 				.sched_policy = SCHED_CBS,
-				.sched_flags = flag,
+				.sched_flags = flag,  // used to know if server or not (1 is server)	
 				.sched_runtime = C,	 // max_capacity
 				.sched_deadline = D, // relative_deadline
 				.sched_period = T,	 // declared_period

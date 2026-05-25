@@ -7,12 +7,11 @@
 
 struct sched_cbs_entity {
 
-//TODO: check if we have everyhting we need in this struct
     struct rb_node  position_node; // position in the RB-tree organized by deadline
     
     struct hrtimer  budget_control_timer;
     
-    u64             max_capacity; // This is the server's max capacity - Q
+    u64             max_capacity; // This is the server's max capacity - Q (for soft tasks) or C for hard tasks
     u64             declared_period; 
     u64             relative_deadline;
     
