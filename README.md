@@ -1,4 +1,6 @@
-# Linux CBS Scheduler - A practical implementation of the Constant Bandwidth Server scheduler in the linux kernel 
+<h1 align="center"> Linux CBS Scheduler </h1> 
+
+# A practical implementation of the Constant Bandwidth Server scheduler in the linux kernel 
 
 ## Overview
 
@@ -108,7 +110,25 @@ Then simply type "exit" to return back to the real system.
 
 ## Building the Kernel
 
+To build the kernel run the script at scripts/build_kernel.sh
 
+- This script appends virtme-ng configurations to kconfigs (`vng --kconfig`) necessary to run the kernel virtualization tool.
+- `make -j$(nproc) 2 > ../errors-6.19.9-moker` invokes the top level makefile using all available CPU cores and redirects stderr to the file errors-6.19.9-moker for analysis.
+- Note: we intentionally use make instead of make install, since we do not want to replace the currently installed kernel with the test kernel. If you do want to install it, that's perfectly fine, just make sure you know what you're doing.
+
+## Running Examples
+
+## Architecture
+
+## Implementation
+
+## Results
+
+## Lessons Learned
+
+## Repository Structure
+
+## References
 
 
 
